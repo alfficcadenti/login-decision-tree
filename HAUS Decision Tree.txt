@@ -1,0 +1,187 @@
+
+# libraries
+library(caret)
+library(plyr)
+library(rpart)
+library(rpart.plot)
+library(rattle)
+library(RColorBrewer)
+library(pROC)
+library(ROCR)
+library(corrplot)
+
+# Load reviewed file
+setwd(dir = "C://Users/aficcadenti/Documents/R/login Decision Tree/")
+import<-read.csv(file = "C://Users/aficcadenti/Documents/R/login Decision Tree/Login_RAW_FEB_MAR.csv")
+
+
+HAUS_data <- import[ which(import$Custom.Attribute.2=='homeaway_us' | import$Custom.Attribute.2=='vacationrentals' | import$Custom.Attribute.2=='vrbo'), ]
+
+#set accept as label to the not reviewed login
+HAUS_data$Final.Review.Status[HAUS_data$Final.Review.Status==""]<-"accept"
+HAUS_data$Final.Review.Status<-factor(HAUS_data$Final.Review.Status)
+
+summary(HAUS_data$Final.Review.Status)
+
+HAUS_data$Final.Review.Status.Numeric[HAUS_data$Final.Review.Status=="accept"]<-0
+HAUS_data$Final.Review.Status.Numeric[HAUS_data$Final.Review.Status=="reject"]<-1
+
+#================================================
+# create new columns for the following variables:
+#================================================
+
+
+# account in watchlist
+HAUS_data$watchlist<-grepl("Account in Watchlist", HAUS_data$Reasons)
+
+# account is older than 30 days
+HAUS_data$OldAccount<-grepl("Pattern Account is Old", HAUS_data$Reasons)
+
+# Account with 4 Consistent Attributes
+HAUS_data$ConsistentAttribs<-grepl("Account with 4 Consistent Attributes", HAUS_data$Reasons)
+
+# account is older than 3 months
+HAUS_data$Account3MOld<-grepl("Account Number is older 3M", HAUS_data$Reasons)
+
+# account is older than 12 months
+HAUS_data$Account12MOld<-grepl("Account Number is older 12M", HAUS_data$Reasons)
+
+# IP already used for accounts
+HAUS_data$IPalreadyUsed<-grepl("Input IP to Account GT 10 Passed 1weekOFF", HAUS_data$Reasons)
+
+# New Device to Account
+HAUS_data$NewDeviceToAccount<-grepl("New Device to Account in a Hr (Smart ID)", HAUS_data$Reasons)
+
+# Input IP age less than a week
+HAUS_data$NewInputIPLTweek<-grepl("Input IP LT Week", HAUS_data$Reasons)
+
+# DNS new to Account
+HAUS_data$DNSNewAccount<-grepl("Account Number and DNS IP LT 2", HAUS_data$Reasons)
+
+# Profiling Incomplete
+HAUS_data$ProfIncomplete<-grepl("Profiling Incomplete", HAUS_data$Reasons)
+
+# Profiling Blocked 
+HAUS_data$ProfBlocked<-grepl("Profiling Blocked", HAUS_data$Reasons)
+
+# New IP GEO for Account 
+HAUS_data$NewIPGEO<-grepl("New IP GEO for Account", HAUS_data$Reasons)
+
+# IF CusAttr7 seen GT 2 Accounts
+HAUS_data$CustAttr7MultipleAccounts<-grepl("IF CusAttr7 seen GT 2 Accounts", HAUS_data$Reasons)
+
+# IF browser language contains EN
+HAUS_data$BrowserLangEN<-grepl("browser language contains en", HAUS_data$Reasons)
+
+# IF browser language suspicious for HAUS
+HAUS_data$BrowserLangSuspHAUS<-grepl("browser language suspicious for HAUS", HAUS_data$Reasons)
+
+
+#day of the week
+HAUS_data$Weekday<-format(HAUS_data$Event.Time,format='%w')
+#table(HAUS_data$Weekday)
+
+#hour of the day
+HAUS_data$hour<-format(HAUS_data$Event.Time,format='%H')
+
+# other variables...
+
+#================================================
+# complete the data cleaning on the sample dataset
+#================================================
+
+# remove brackets and data cleaning
+HAUS_sample$Custom.Output.18<-gsub(pattern = "[{\"]", replacement = "", x = HAUS_data$Custom.Output.18)
+HAUS_sample$Custom.Output.18<-gsub(pattern = "[}\"]", replacement = "", x = HAUS_data$Custom.Output.18)
+HAUS_sample$Reasons<-gsub(pattern = "[{]", replacement = "", x = HAUS_data$Reasons)
+HAUS_sample$Reasons<-gsub(pattern = "[}]", replacement = "", x = HAUS_data$Reasons)
+HAUS_sample$InputIpZeroScore<-gsub(pattern = "[}]", replacement = "", x = HAUS_data$Reasons)
+HAUS_sample$Event.Time<-as.POSIXct(substr(HAUS_data$Event.Time,1,19), format = "%Y%m%d %H:%M:%S")
+
+
+# Save in a file
+write.csv(HAUS_data, file = "C://Users/aficcadenti/Documents/R/login Decision Tree/HAUS_DATA_preprocess.csv")
+write.csv(HAUS_sample, file = "C://Users/aficcadenti/Documents/R/login Decision Tree/HAUS_sample.csv")
+
+#====================================
+# sampling for train and test dataset
+#====================================
+
+#Stratified sampling from the whole dataset
+sample_index < createDataPartition(HAUS_data$Final.Review.Status, p = .8, list = FALSE)
+train < HAUS_data[sample_index,]
+test  < HAUS_data[sample_index,]
+
+
+#to verify distribution of the samples
+summary(train$Final.Review.Status)
+summary(train$Final.Review.Status)/dim(train)[1]
+
+summary(test$Final.Review.Status)
+summary(test$Final.Review.Status)/dim(test)[1]
+
+#======== Undersampling
+#reduce the dataset to have only 2.5% of the accept and 100% of the reject
+HAUS_accept <- HAUS_data[ which(HAUS_data$Final.Review.Status=='accept'),]
+indexes_accept <- sample(1:nrow(HAUS_data[ which(HAUS_data$Final.Review.Status=='accept'),]), size=0.025*nrow(HAUS_data[ which(HAUS_data$Final.Review.Status=='accept'),]))
+
+HAUS_reject <- HAUS_data[ which(HAUS_data$Final.Review.Status=='reject'),]
+HAUS_sample<-rbind(HAUS_data[indexes_accept,],HAUS_reject)
+
+#Perform stratified sampling on the subset 80/20
+sample_index <-createDataPartition(HAUS_sample$Final.Review.Status, p = .8, list = FALSE)
+train <- HAUS_sample[ sample_index,]
+test  <- HAUS_sample[sample_index,]
+
+
+
+
+
+
+#===========
+#Correlation
+#===========
+
+#convert data frame to data matrix to force all columns as numeric
+HAUS_matrix<data.matrix(HAUS_sample, rownames.force = NA)
+corrplot(cor(HAUS_matrix,use = "p"),type = "lower")
+
+
+
+#==============
+#Model Building
+#==============
+
+#first model
+fit <-rpart(Final.Review.Status ~ Custom.Attribute.1 + Custom.Attribute.2 + Agent.Type + Input.IP.Score + Input.IP.Worst.Score + OldAccount + Weekday + hour + True.IP.Routing.Type + watchlist + IPalreadyUsed + DNSNewAccount + NewInputIPLTweek + ProfIncomplete + ProfBlocked + True.IP.Result,
+             data=train,
+             method="class")
+
+			 
+fancyRpartPlot(fit,palettes=c("Greens"),sub=paste("Decision Tree ATO Detection model ",format(Sys.time(), "%Y %b %d %a %X "),sep=" "))
+
+
+#second model all variables)
+fit <-rpart(Final.Review.Status ~ Custom.Attribute.1 + Custom.Attribute.2 + Agent.Type + Input.IP.Score + Input.IP.Worst.Score + DNSNewAccount + ProfIncomplete + ProfBlocked + True.IP.Result,
+             data=train,
+             method="class")
+
+fancyRpartPlot(fit,palettes=c("Greens","Reds"),sub=paste("Decision Tree ATO Detection model ",format(Sys.time(), "%Y %b %d %a %X "),sep=" "))
+
+
+#forth model (based on the correlation + rules new profile (device IP)) SAME SCORE as the PREVIOUS
+fit < rpart(Final.Review.Status ~ True.IP.Geo + NewIPGEO + Input.IP.Worst.Score + BrowserLangEN + True.IP.Result +BrowserLangSuspAbritel + NewDeviceToAccount + NewInputIPLTweek, data=train,method="class")
+
+fancyRpartPlot(fit,palettes=c("Greens","Reds"),sub=paste("Decision Tree ATO Detection model ",format(Sys.time(), "%Y %b %d %a %X "),sep=" "), type =4)
+
+
+
+#==================
+# Model Performance
+#==================
+
+pred = predict(fit, newdata=test, type = 'class')
+#ROCRpred<prediction(pred,test$Final.Review.Status)
+confusionMatrix(data=pred, test$Final.Review.Status, positive="reject")
+roc(as.numeric(pred),as.numeric(test$Final.Review.Status))
+plot.roc(as.numeric(pred),as.numeric(test$Final.Review.Status))
